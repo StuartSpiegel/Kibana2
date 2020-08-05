@@ -1,0 +1,329 @@
+GET _search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+#Cluster management
+GET _cluster/health
+GET _cluster/settings
+GET _cat/indices?v
+GET _cat/shards?v
+GET _cat/fielddata
+
+#Configure and start ES nodes such that if a node failure occurs there is no data loss, forced awareness of nodes in the cluster, green health status
+PUT _cluster/settings
+{
+  "persistent": {
+    "cluster.routing.allocation.awareness.attributes": ["my_rack", "my_temp"],
+    "cluster.routing.allocation.awareness.force.my_rack.values": ["rack1 , rack2"],
+    "cluster.routing.allocation.awareness.force.my_temp.values" : ["hot , warm"]
+  }
+}
+
+#If the field runtime for the movies index doesnt exist, create it using painless and set its value to 120.
+# Create a scripted field with painless and reindex into the desired index.
+POST _scripts/create-field
+{
+  "script": {
+    "lang": "painless",
+    "source": """
+      if(!ctx._source.containsKey('runtime')){
+        ctx._source['runtime'] = 120;
+      }
+     """
+  }
+}
+
+POST _reindex
+{
+  "source": {
+    "index": "movies"
+  },
+   "dest": {
+    "index": "task3"
+  },
+  "script": {
+    "id": "create-field"
+  }
+}
+
+# Create a new field called “ingredients list” which is a concatenation of two other fields. They wanted you to transform the data using painless. Then reindex through the script to a new inedx called "task2".
+POST _scripts/concatenate-field
+{
+  "script": {
+    "lang": "painless",
+    "source": """
+      if(!ctx._source.containsKey('ingredients_list')) {
+        ctx._source['ingredients_list'] = ctx._source['ingredients_1'] + " " + ctx._source['ingredients_2']
+      }
+      """
+  }
+}
+
+POST ingredients/_doc/1
+{
+  "ingredients_1": "apple",
+  "ingredients_2": "orange",
+  "ingredients_list": "this is a test"
+}
+
+POST _reindex
+{
+  "source": {
+    "index": "ingredients"
+  },
+  "dest": {
+    "index": "task2"
+  },
+  "script": {
+    "id": "concatenate-field"
+  }
+}
+
+PUT my_index
+{
+  "settings": {
+    "analysis": {
+      "analyzer": {
+        "my_analyzer": {
+          "tokenizer": "standard",
+          "char_filter": [
+            "my_char_filter"
+          ]
+        }
+      },
+      "char_filter": {
+        "my_char_filter": {
+          "type": "pattern replace",
+          "pattern": "(\\d+)-(?=\\d)",
+          "replacement": "ounce"
+        }
+      }
+    }
+  }
+}
+
+# Write a search on the eqartquakes index for maximum magnitude and max depth filtered over the
+# @timestamp field (Aggregations, Metric- Buckets, Date Histogram)
+
+#Create the test index and test document
+POST earthquakes/_doc/1
+{
+  "Quake1_depth": "100 m",
+  "Quake2_depth": "245 m",
+  "Quake3_depth": "304m",
+  "Quake4_depth": "411m",
+  "depths": [100, 245, 304, 411],
+  "quake1_mag": 5.5,
+  "quake2_mag": 7.8,
+  "quake3_mag": 9.2,
+  "quake4_mag": 2.3,
+  "magnitude": [5.5 , 7.8 , 9.2 , 2.3]
+}
+
+# We now use calendar_interval or fixed_interval instead of just "interval" for DateHistogram
+GET /earthquakes/_search
+{
+  "size": 0,
+  "aggs": {
+    "max_by_month": {
+      "date_histogram": {
+        "field": "@timestamp",
+        "calendar_interval": "month"
+      },
+      "aggs": {
+        "mag_by_month": {
+          "max": {
+            "field": "magnitude"
+          }
+        }
+      }
+    },
+    "max_depth": {
+      "max": {
+        "field": "depths"
+      }
+    }
+  }
+}
+
+#Select from the movies index where title containes "me" or "my" and if tags has "romantic comedy" and boost scoring.
+#Create the test index and test doc
+POST movies/_doc/1
+{
+ "title": ["some random chick flick", "billa ballz", "Star Wars", "Harry Potter", "My fat greek Wedding", "Terminator"],
+ "tags" : ["chick", "romance", "romantic", "comedy", "thriller"],
+ "movie1" : {
+   "title": "some random chick flick",
+   "tags": "chick, romance, romantic, comedy, thriller"
+ },
+ "movie2": {
+   "title": "billa ballz",
+   "tags": "stupid, thriller, bro"
+ }
+}
+
+GET movies/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "match": {
+            "title": "me my"
+          }
+        }
+      ],
+      "should": [
+        {
+          "match": {
+            "tags.keyword": "romantic comedy"
+          }
+        }
+      ],
+      "boost": 2
+    }
+  }
+}
+
+#Write a query where the title field matches the phrase "Terminator", and boost scoring for the tags field
+#highlight on all query results (match-phrase query, boost, should clause)
+GET movies/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "match_phrase": {
+            "title": "Terminator"
+          }
+        }
+      ],
+      "should": [
+        {
+          "match": {
+            "tags": " "
+          }
+        }
+      ],
+      "boost": 2
+    }
+  },
+  "highlight": {
+    "fields": {
+      "content": {}
+    }
+  }
+}
+
+#Define a new index template that matches the index pattern (temp-*) and preserves the original mappings of the ingredients index. Add a index alias X and add 3 new fields called “id, cost, recipe”
+
+#Get the current mapping structure of the ingredients index for easy placement into our template.
+GET ingredients/_mapping
+
+PUT _template/template_1
+{
+  "index_patterns": [
+    "temp*"
+  ],
+  "template": {
+    "settings": {
+      "number_of_shards": 1
+    },
+    "mappings": {
+      "_source": {
+        "enabled": false
+      },
+      "properties": {
+        "ingredients_1": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "ingredients_2": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "ingredients_list": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "id": {
+          "type": "keyword",
+          "fields" : {
+            "keyword" : {
+              "type" : "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "cost": {
+          "type": "text",
+          "fields" : {
+            "keyword" : {
+              "type" : "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "recipe": {
+          "type": "keyword",
+          "fields" : {
+            "keyword" : {
+              "type" : "keyword",
+              "ignore_above": 256
+            }
+          }
+        }
+      }
+    }
+  },
+  "aliases": {
+    "my_data": {},
+    "my_alias": {}
+  }
+}
+
+#Custom Analyzer example, a basic example that filters out <html> tags for inputted text.
+PUT my-index-000001
+{
+  "settings": {
+    "analysis": {
+      "analyzer": {
+        "my_custom_analyzer": {
+          "type": "custom",
+          "tokenizer": "standard",
+          "char_filter": [
+            "html_strip"
+          ],
+          "filter": [
+            "lowercase",
+            "asciifolding"
+          ]
+        }
+      }
+    }
+  }
+}
+
+POST my-index-000001/_analyze
+{
+  "analyzer": "my_custom_analyzer",
+  "text": "Is this <b>déjà vu</b>?"
+}

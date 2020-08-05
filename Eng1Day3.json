@@ -1,0 +1,926 @@
+
+GET _search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+#Cluster management
+GET _cat/aliases
+GET _cat/indices?v
+GET _cat/nodeattrs?v
+
+#Get the mapping of the blogs index
+GET /blogs/_mapping
+
+#Define a new mapping for the blogs index
+PUT blogs_test
+{
+  "mappings": {
+    "properties": {
+      "author": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      },
+      "category": {
+        "type": "keyword"
+      },
+      "content": {
+        "type": "text",
+        "fields": {
+          "english": {
+            "type": "text",
+            "analyzer": "english"
+          },
+          "spanish": {
+            "type": "text",
+            "analyzer": "spanish"
+          }
+        }
+      },
+      "locales": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      },
+      "publish_date": {
+        "type": "date",
+        "format": "YYYY-MM-DD"
+      },
+      "seo_title": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      },
+      "title": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      },
+      "url": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      }
+    }
+  }
+}
+
+#Only reindex 100 documents
+#Use the Reindex API but control the data coming in
+POST _reindex
+{
+  "source": {
+    "index": "blogs",
+    "size": 100,
+     "query": {
+      "match": {
+        "author": {
+          "query": "shay"
+        }
+      }
+    }
+  },
+  "dest": {
+    "index": "blogs_test"
+  }
+}
+
+GET blogs_test/_search
+{
+  "query": {
+    "match": {
+      "content.english": "shay"
+    }
+  }
+}
+#Create the dynamic template
+PUT test2
+{
+  "mappings": {
+    "dynamic_templates": [
+      {
+        "string_match": {
+          "match_mapping_type": "string",
+          "mapping": {
+            "type": "keyword"
+          }
+        }
+      },
+      {
+        "my_float_values": {
+          "match_mapping_type": "double",
+          "mapping": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          }
+        }
+      }
+    ]
+  }
+}
+#Test the dynamic mapping
+GET test1/_mapping
+GET test2/_mapping
+
+POST test2/_doc
+{
+  "test_string": "test",
+  "test_float" : 4.355896785
+
+}
+
+# --Lab 4.1--
+PUT tmp_index/_doc/1
+{
+  "@timestamp": "2019-07-08T03:00:00.000Z",
+  "ip" : "105.32.126.44",
+  "bytes" : 8261,
+  "coordinates" : {
+    "lat" : 30.42769722,
+    "lon" : -87.70082
+  }
+}
+
+GET tmp_index/_mapping
+
+# Bad mapping the IP fields is mapped as text
+# We want the IP field to be mapped as type IP
+# 0 hits as a result before remapping
+GET tmp_index/_search
+{
+  "query": {
+    "term": {
+      "ip": "105.32.0.0/16"
+    }
+  }
+}
+
+PUT my_logs
+{
+  "mappings": {
+    "properties": {
+      "@timestamp": {
+        "type": "date"
+      },
+      "bytes": {
+        "type": "long"
+      },
+      "coordinates": {
+        "properties": {
+          "lat": {
+            "type": "float"
+          },
+          "lon": {
+            "type": "float"
+          }
+        }
+      },
+      "ip": {
+        "type": "ip",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      }
+    }
+  }
+}
+POST my_logs/_doc
+{
+  "ip" : "105.32.126.44"
+}
+
+#The document will now be returned as a hit
+GET my_logs/_search
+{
+  "query": {
+    "term": {
+      "ip": "105.32.0.0/16"
+    }
+  }
+}
+
+GET my_logs/_mapping
+PUT my_logs/_mapping
+{
+  "mappings": {
+    "properties": {
+      "coordinates": {
+        "type": "geo_point"
+      }
+    }
+  }
+}
+
+PUT my_logs/_doc/1
+{
+  "@timestamp": "2019-07-08T03:00:00.000Z",
+  "ip" : "105.32.126.44",
+  "bytes" : 8261,
+  "coordinates" : {
+    "lat" : 30.42769722,
+    "lon" : -87.70082
+  }
+}
+
+GET my_logs/_search
+{
+  "query": {
+    "geo_distance": {
+      "distance": "200km",
+      "coordinates": {
+        "lat": 30,
+        "lon": -87
+      }
+    }
+  }
+}
+
+# --Lab 4.2 --
+#sample doc into test index
+PUT tmp_index/_doc/2
+{
+    "country_name": "United Kingdom"
+}
+
+GET tmp_index/_mapping
+#Mapped as type text and type keyword
+
+#Test queries against the temp index to see hits vs non hits on the keyword vs texting mapping of the "country_name" field
+#hit 1
+GET tmp_index/_search
+{
+  "query": {
+    "match": {
+      "country_name": "kingdom"
+    }
+  }
+}
+#hit 0
+GET tmp_index/_search
+{
+  "query": {
+    "match": {
+      "country_name.keyword": "kingdom"
+    }
+  }
+}
+
+#look at how the analyzer is breaking the string down into tokens
+GET _analyze
+{
+  "text": "United Kingdom",
+  "analyzer": "standard"
+}
+
+GET _analyze
+{
+  "text": "Nodes and Shards",
+  "analyzer": "standard"
+}
+
+GET _analyze
+{
+  "text": "Nodes and Shards",
+  "analyzer": "english"
+}
+
+# 4.2.8
+GET tmp_index/_mapping
+
+PUT tmp_index/_mapping
+{
+  "mappings": {
+    "properties": {
+      "@timestamp": {
+        "type": "date"
+      },
+      "bytes": {
+        "type": "long"
+      },
+      "coordinates": {
+        "properties": {
+          "lat": {
+            "type": "float"
+          },
+          "lon": {
+            "type": "float"
+          }
+        }
+      },
+      "country_name": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      },
+      "ip": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      },
+      "title": {
+        "type": "text",
+        "analyzer": "english"
+      }
+    }
+  }
+}
+
+PUT tmp_index/_mapping
+{
+  "properties": {
+    "title": {
+      "type": "text",
+      "analyzer": "english"
+    }
+  }
+}
+
+PUT tmp_index/_doc/3
+{
+  "title": "Nodes and Shards"
+}
+
+#Return 1 doc, we are good
+GET tmp_index/_search
+{
+  "query": {
+    "match": {
+      "title": "node"
+    }
+  }
+}
+
+# -- Lab 4.3 --
+GET tmp_index/_search
+{
+  "size": 0,
+  "aggs": {
+    "top_countries": {
+      "terms": {
+        "field": "country_name",
+        "size": 10
+      }
+    }
+  }
+}
+
+#Add new fields mappings for region_name and cite_name fields
+GET tmp_index/_mapping
+PUT tmp_index/_mapping
+{
+  "properties": {
+    "region_name": {
+      "type": "keyword",
+      "index": false
+    },
+    "city_name": {
+      "type": "keyword",
+      "index": false
+    }
+  }
+}
+
+POST tmp_index/_doc/4
+{
+  "region_name": "Hertfordshire",
+  "city_name": "Hatfield"
+}
+
+#This query will not work since it is attempting to match the region_name field which is mapped as keyword to Hertfordshire when it should be mapped as text.
+GET tmp_index/_search
+{
+  "query": {
+    "match": {
+      "region_name": "Hertfordshire"
+    }
+  }
+}
+
+GET tmp_index/_search
+{
+  "size": 0,
+  "aggs": {
+    "top_regions": {
+      "terms": {
+        "field": "region_name"
+      }
+    }
+  }
+}
+
+GET tmp_index/_search
+{
+  "query": {
+    "match": {
+      "city_name": "Hatfield"
+    }
+  }
+}
+
+GET tmp_index/_search
+{
+  "size": 0,
+  "aggs": {
+    "top_regions": {
+      "terms": {
+        "field": "city_name"
+      }
+    }
+  }
+}
+
+#Check the mappings of the logs_server* indices
+GET logs_server*/_mapping
+
+# 4.2.7
+PUT logs_fixed
+PUT logs_fixed/_mapping
+{
+  "mappings": {
+    "properties": {
+      "log": {
+        "enabled": false
+      },
+      "agent": {
+        "enabled": false
+      }
+    }
+  }
+}
+
+# -- Lab 4.4 --
+# Create a Dynamic template for the logs_fixed index
+PUT logs_fixed/_mapping
+{
+  "dynamic_templates": [
+    {
+      "string_fields": {
+        "match_mapping_type": "string",
+        "mapping": {
+          "type": "keyword"
+        }
+      }
+    }
+  ]
+}
+#Call the reindex API
+POST _reindex?wait_for_completion=false
+{
+  "source": {
+    "index": "logs_server1"
+  },
+  "dest": {
+    "index": "logs_fixed"
+  }
+}
+#Check to see that the required fields have been dynamically mapped
+GET logs_fixed/_mapping
+GET _cat/indices?v
+
+#Create the surverys index
+PUT surveys
+
+PUT surveys/_mapping
+{
+  "properties": {
+    "all_feedback": {
+      "type": "text"
+    },
+    "instructor_feedback": {
+      "type": "text",
+      "copy_to": "all_feedback"
+    },
+    "labs_feedback": {
+      "type": "text",
+      "copy_to": "all_feedback"
+    },
+    "course_rating": {
+      "type": "integer",
+      "null_value": 1,
+      "coerce": false
+    }
+  }
+}
+#Index the following doc into surveys
+PUT surveys/_doc/1
+{
+  "instructor_feedback": "She was great!",
+  "labs_feedback": "Labs were hard!"
+}
+
+GET surveys/_search
+{
+  "query": {
+    "match": {
+      "all_feedback": "great"
+    }
+  }
+}
+
+GET surveys/_search
+{
+  "query": {
+    "bool": {
+      "filter": {
+        "range": {
+          "course_rating": {
+            "gte": 1
+          }
+        }
+      }
+    }
+  }
+}
+
+PUT surveys/_doc/2
+{
+  "course_rating": null
+}
+
+PUT surveys/_doc/3
+{
+  "course_rating": "8"
+}
+
+#Cleanup test environment
+DELETE surveys,tmp_index,my_logs,logs_fixed
+
+#Day 3 Challenge Question
+#--------------------------------------------------
+GET logs_server1/_mapping
+
+PUT logs_server1/_mapping
+{
+  "mappings": {
+    "properties": {
+      "@timestamp": {
+        "type": "date"
+      },
+      "agent": {
+        "properties": {
+          "ephemeral_id": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          },
+          "hostname": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          },
+          "id": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          },
+          "type": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          },
+          "version": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          }
+        }
+      },
+      "ecs": {
+        "properties": {
+          "version": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          }
+        }
+      },
+      "geoip": {
+        "properties": {
+          "city_name": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          },
+          "continent_code": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          },
+          "country_code2": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          },
+          "country_code3": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          },
+          "country_name": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          },
+          "location": {
+                "type": "geo_point"
+            },
+            "region_name": {
+              "type": "text",
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 256
+                }
+              }
+            }
+          }
+        },
+        "host": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "http_version": {
+          "type": "keyword"
+        },
+        "input": {
+          "properties": {
+            "type": {
+              "type": "text",
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 256
+                }
+              }
+            }
+          }
+        },
+        "language": {
+          "properties": {
+            "code": {
+              "type": "text",
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 256
+                }
+              }
+            },
+            "url": {
+              "type": "text",
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 256
+                }
+              }
+            }
+          }
+        },
+        "level": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "log": {
+          "properties": {
+            "file": {
+              "properties": {
+                "path": {
+                  "type": "text",
+                  "fields": {
+                    "keyword": {
+                      "type": "keyword",
+                      "ignore_above": 256
+                    }
+                  }
+                }
+              }
+            },
+            "offset": {
+              "type": "long"
+            }
+          }
+        },
+        "method": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "originalUrl": {
+          "type": "keyword",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "response_size": {
+          "type": "long"
+        },
+        "runtime_ms": {
+          "type": "long"
+        },
+        "status_code": {
+          "type": "short"
+        },
+        "user_agent": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        }
+      }
+    }
+  }
+
+
+#Create a dynamic template that maps strings as keyword only and doubles as scaled floats with scaling factor of 100.
+DELETE logs_server1
+
+
+GET logs_server1/_mapping
+GET logs_server2/_mapping
+
+#Definition of my dynamic template
+PUT logs_server1
+{
+  "mappings": {
+    "dynamic_templates": [
+      {
+        "doubles": {
+          "match_mapping_type": "double",
+          "mapping": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          }
+        }
+      },
+      {
+        "strings": {
+          "match_mapping_type": "string",
+          "mapping": {
+            "type": "keyword",
+            "fields": {
+              "raw": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}
+
+#Create test index
+PUT test-mapping
+GET test-mapping/_mapping
+
+#Do the Reindex
+POST _reindex?wait_for_completion=true
+{
+  "source": {
+    "index": "logs_server2"
+  },
+  "dest": {
+    "index": "test-mapping"
+  }
+}
+
+#Create a test doc
+PUT /test-mapping/_doc/1
+{
+  "field_1": "blah blah",
+  "field_2": "testing",
+  "test_float": 4.39486573657894
+
+}
+GET test-mapping/_mapping
+GET _cat/indices?v
+
+
+##BONUS##
+PUT bonus
+{
+  "mappings": {
+    "dynamic_templates": [
+      {
+        "bonus_match": {
+          "match": "f_*",
+          "mapping": {
+            "type": "float"
+          }
+        }
+      }
+    ]
+  }
+}
+
+GET bonus/_mapping
+
+POST _reindex
+{
+  "source": {
+    "index": "logs_server1"
+  },
+  "dest": {
+    "index": "test-mapping"
+  }
+}

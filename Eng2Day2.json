@@ -1,0 +1,663 @@
+
+GET _search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+## Ingest pipelines
+#If i see the field of locales, sepearate each keyword value in the array by their commas
+#If reindex batch field exists were setting it to 0, if it doesnt exist we create it and set it to 0.
+PUT _ingest/pipeline/test_pipe
+{
+  "description": "This is a test pipeline",
+   "processors": [
+    {
+      "split": {
+        "field": "locales",
+        "separator": ","
+      },
+      "set": {
+        "field": "reindexBatch",
+        "value": "0"
+      }
+    }
+  ]
+}
+
+#test the newly created ingest pipeline
+POST _ingest/pipeline/test_pipe/_simulate
+{
+  "docs": [
+    {
+      "_source": {
+        "locales": "de-de,fr-fr,en-us,zh-chs,it-it,es-es"
+      }
+    }
+  ]
+}
+
+## Painless and Update by Query ##
+
+POST _reindex
+{
+  "source": {
+    "index": "blogs",
+    "query": {
+      "match": {
+        "content": "elasticsearch"
+      }
+    }
+  },
+  "dest": {
+    "index": "blogs_v2",
+    "pipeline": "test_pipe"
+  }
+}
+
+#Check the doc, cluster, and mappings after the reindex
+GET _cat/indices
+GET blogs_v2/_mapping
+GET blogs_v2/_search
+
+# Does the reindexBatch field exist, thats the purpose of this query, am i tranformaing fields or updating documents in the stack already
+GET blogs_v2/_search
+{
+  "query": {
+    "match": {
+      "reindexBatch": 0
+    }
+  }
+}
+# Script to confirm the reindexBatch and then allow the user to put in the amount to increment by
+#Transform data using script processor --> the syntax is then ctx.(something)
+#updating existing documents means using (ctx._source)
+PUT _scripts/reindexbatchinc
+{
+  "script": {
+    "lang": "painless",
+    "source": "ctx._source['reindexBatch'] += 1"
+  }
+}
+
+PUT _scripts/test_script
+{
+  "script": {
+    "lang": "painless",
+    "source": "ctx._source['reindexBatch'] += params['indexSize']"
+  }
+}
+
+#Call the script and effect the index
+POST blogs_v2/_update_by_query
+{
+  "script": {
+    "id" : "test_script",
+    "params": {
+      "indexSize" : 3
+    }
+  }
+}
+#Confirm that reindexBatch occured by getting the docs from the index and checking the field
+GET blogs_v2/_search
+
+#Define the blogs_fixed index for the labs
+PUT blogs_fixed
+{
+  "mappings": {
+    "properties": {
+      "author": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "category": {
+        "type": "keyword"
+      },
+      "content": {
+        "type": "text"
+      },
+      "locales": {
+        "type": "keyword"
+      },
+      "publish_date": {
+        "type": "date"
+      },
+      "seo_title": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "title": {
+        "type": "text"
+      },
+      "url": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "number_of_views": {
+        "type": "integer"
+      },
+      "reindexBatch": {
+        "type": "byte"
+      }
+    }
+  }
+}
+
+
+PUT _scripts/test_script2
+{
+  "script": {
+    "lang": "painless",
+    "source": "ctx._source['reindexBatch'] = 1;"
+  }
+}
+
+# 2.1.3
+POST _reindex
+{
+  "source": {
+    "index": "blogs"
+  },
+   "dest": {
+    "index": "blogs_fixed"
+  },
+  "script": {
+    "source": "ctx._source['reindexBatch'] = 1;"
+  }
+}
+
+#Verify the script worked
+GET blogs_fixed/_search
+
+#Close the blogs_fixed index
+POST blogs_fixed/_close
+
+#put the custom analyzer from the other day
+PUT blogs_fixed/_settings
+{
+  "analysis": {
+    "char_filter": {
+      "cpp_it": {
+        "type": "mapping",
+        "mappings": [
+          "c++ => cpp",
+          "C++ => cpp",
+          "IT => _IT_"
+        ]
+      }
+    },
+    "filter": {
+      "my_stop": {
+        "type": "stop",
+        "stopwords": [
+          "can",
+          "we",
+          "our",
+          "you",
+          "your",
+          "all"
+        ]
+      }
+    },
+    "analyzer": {
+      "my_analyzer": {
+        "tokenizer": "standard",
+        "char_filter": [
+          "cpp_it"
+        ],
+        "filter": [
+          "lowercase",
+          "stop",
+          "my_stop"
+        ]
+      }
+    }
+  }
+}
+
+#RE-open the blogs_fixed index
+POST blogs_fixed/_open
+
+# 2.1.7
+PUT blogs_fixed/_mappings
+{
+  "properties": {
+    "content": {
+      "type": "text",
+      "fields": {
+        "my_analyzer": {
+          "type": "text",
+          "analyzer": "my_analyzer"
+        }
+      }
+    },
+    "title": {
+      "type": "text",
+      "fields": {
+        "my_analyzer": {
+          "type": "text",
+          "analyzer": "my_analyzer"
+        }
+      }
+    }
+  }
+}
+
+GET blogs_fixed/_search
+{
+  "query": {
+    "match": {
+      "content.my_analyzer": "c++"
+    }
+  }
+}
+
+#We dont want to update all documents by query just a subset--> so we look for docs where reindexBatch is equal to 1. then call the script and make the changes on those docs
+POST blogs_fixed/_update_by_query
+{
+  "query": {
+    "match" : {
+      "reindexBatch" : 1
+    }
+  },
+  "script": {
+    "source" : "ctx._source['reindexBatch'] = 2;"
+  }
+}
+
+GET blogs_fixed/_search
+{
+  "query": {
+    "match": {
+      "content.my_analyzer": "c++"
+    }
+  }
+}
+
+#Example of using _delte_by_query
+POST blogs_fixed/_delete_by_query
+{
+  "query": {
+    "match": {
+      "category": "Releases"
+    }
+  }
+}
+
+# 2.2.1
+GET blogs_fixed/_search
+{
+  "size": 0,
+  "aggs": {
+    "locale_terms": {
+      "terms": {
+        "field": "locales",
+        "size": 10
+      }
+    }
+  }
+}
+
+# Ingest pipeline EXAM PREP 2.2.2
+PUT _ingest/pipeline/fix_locales
+{
+  "processors": [
+    {
+      "set": {
+        "if": "ctx['locales'].empty",
+        "field": "locales",
+        "value": "en-en"
+      }
+    },
+    {
+      "set": {
+        "field": "reindexBatch",
+        "value": "3"
+      }
+    },
+    {
+      "split": {
+        "field": "locales",
+        "separator": ","
+      }
+    }
+  ]
+}
+
+#POST the test documents for the pipeline
+PUT blogs_fixed/_doc/1
+{
+  "locales": "de-de,fr-fr,ja-jp,ko-kr"
+}
+
+PUT blogs_fixed/_doc/2
+{
+  "locales": ""
+}
+
+# Test the newly created pipeline
+POST _ingest/pipeline/fix_locales/_simulate
+{
+   "docs": [
+    {
+      "_source": {
+        "locales": "de-de,fr-fr,ja-jp,ko-kr"
+      }
+    }
+  ]
+}
+
+# 2.2.4
+POST blogs_fixed/_update_by_query?pipeline=fix_locales
+{
+  "query": {
+    "match": {
+      "reindexBatch": 2
+    }
+  }
+}
+
+GET _nodes/stats/ingest?filter_path=nodes.*.ingest.pipelines.fix_locales
+
+GET blogs_fixed/_search
+{
+  "aggregations": {
+    "locale_terms": {
+      "buckets": [
+        {
+          "key": "en-en",
+          "doc_count": 1290
+        },
+        {
+          "key": "fr-fr",
+          "doc_count": 43
+        },
+        {
+          "key": "de-de",
+          "doc_count": 41
+        },
+        {
+          "key": "ko-kr",
+          "doc_count": 37
+        },
+        {
+          "key": "ja-jp",
+          "doc_count": 34
+        },
+        {
+          "key": "zh-chs",
+          "doc_count": 8
+        }
+      ]
+    }
+  }
+}
+
+GET blogs_fixed/_search
+{
+  "size": 100,
+  "_source": "locales"
+}
+
+# 2.2.8 Exam Prep
+PUT _ingest/pipeline/underscore_locales
+{
+  "processors": [
+    {
+      "foreach": {
+        "field": "locales",
+        "processor": {
+          "gsub": {
+            "field": "_ingest._value",
+            "pattern": "-",
+            "replacement": "_"
+          }
+        }
+      }
+    },
+    {
+      "set": {
+        "field": "reindexBatch",
+        "value": "4"
+      }
+    }
+  ]
+}
+
+POST _ingest/pipeline/underscore_locales/_simulate
+{
+  "docs": [
+    {
+      "_source": {
+        "locales": "de-de,fr-fr,en-us,zh-chs,it-it,es-es"
+      }
+    }
+  ]
+}
+
+# 2.2.10
+POST blogs_fixed/_update_by_query?pipeline=underscore_locales
+{
+  "query": {
+    "match": {
+      "reindexBatch": 3
+    }
+  }
+}
+
+# 2.2.11
+GET blogs_fixed/_search
+{
+  "size": 100,
+  "_source": "locales"
+}
+
+# -- LAB 2.3 ---------------------------------
+GET blogs_fixed/_search
+{
+  "query": {
+    "bool": {
+      "filter": {
+        "match": {
+          "seo_title.keyword": ""
+        }
+      }
+    }
+  }
+}
+
+# 2.3.2 EXAM PREP
+#I tried to define the "if" on a seperate line before looking up the syntax for equals empty
+PUT _ingest/pipeline/fix_seo_title
+{
+  "processors": [
+    {
+      "script": {
+        "source": """
+if("".equals(ctx['seo_title'])) {
+  ctx['seo_title'] = ctx['title'];
+}
+ctx['reindexBatch'] = 5;
+"""
+      }
+    }
+  ]
+}
+
+#Put the test documents in the index
+PUT blogs_fixed/_doc/1
+{
+  "title": "Where in the World is Elastic? - Elastic{ON}Tour London & Paris",
+   "seo_title": ""
+}
+
+PUT blogs_fixed/_doc/2
+{
+   "title": "This week in Elasticsearch and Apache Lucene",
+   "seo_title": "What's new in Elasticsearch and Apache Lucene"
+}
+
+#Test the pipline with the simulate endpoint
+POST _ingest/pipeline/fix_seo_title/_simulate
+{
+  "docs": [
+    {
+      "_source": {
+        "title": "Where in the World is Elastic? - Elastic{ON}Tour London & Paris",
+        "seo_title": ""
+      }
+    },
+    {
+      "_source": {
+        "title": "This week in Elasticsearch and Apache Lucene",
+        "seo_title": "What's new in Elasticsearch and Apache Lucene"
+      }
+    }
+  ]
+}
+
+#Run an update by query by calling our defined pipeline
+POST blogs_fixed/_update_by_query?pipeline=fix_seo_title
+{
+  "query": {
+    "match": {
+      "reindexBatch": 4
+    }
+  }
+}
+
+GET blogs_fixed/_search
+{
+  "query": {
+    "bool": {
+      "filter": {
+        "match": {
+          "seo_title.keyword": ""
+        }
+      }
+    }
+  }
+}
+
+# 2.3.6
+POST blogs_fixed/_update_by_query
+{
+  "script": {
+    "source": "ctx._source['number_of_views'] = 0"
+  }
+}
+
+# 2.3.7
+GET blogs_fixed/_search
+{
+  "query": {
+    "bool": {
+      "filter": {
+        "match": {
+          "url.keyword": "/blog/elasticsearch-storage-the-true-story"
+        }
+      }
+    }
+  }
+}
+
+# 2.3.10
+PUT _scripts/add_to_number_of_views
+{
+  "script": {
+    "lang": "painless",
+    "source": "ctx._source['number_of_views'] += params['new_views']"
+  }
+}
+
+GET logs_server*/_search
+{
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "range": {
+            "@timestamp": {
+              "gte": "2017-05-13",
+              "lt": "2017-05-14"
+            }
+          }
+        },
+        {
+          "match": {
+            "originalUrl.keyword": "/blog/elasticsearch-storage-the-true-story"
+          }
+        }
+      ]
+    }
+  }
+}
+
+#Create a painles script that creates the reindexBatch field
+PUT _scripts/my_script
+{
+  "script": {
+    "lang": "painless",
+    "source": "ctx['reindexBatch'] = 0"
+  }
+}
+
+# Challenge 2 Painless Scripting
+PUT _ingest/pipeline/my_pipeline
+{
+  "processors": [
+    {
+      "user_agent": {
+        "field": "user_agent"
+      }
+    },
+    {
+      "split": {
+        "field": "locales",
+        "separator": ","
+      }
+    },
+    {
+      "script": {
+        "id": "my_script"
+      }
+    },
+    {
+      "set": {
+        "field": "transformed",
+        "value": 1
+      }
+    }
+  ]
+}
+
+#Create the temp index for the challenge
+PUT my_index
+
+#Test the pipeline
+PUT my_index/_doc/my_id1?pipeline=my_pipeline
+{
+  "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36",
+  "locales": "en-us,es-es,fr-fr,de-de"
+}
+
+POST _ingest/pipeline/my_pipeline/_simulate
+{"docs":[{"_source":{"user-agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36","locales":"en-us,es-es,fr-fr,de-de"}}]}
+
+GET my_index/_search
+
+##########################################
+# Secure Elastic Search

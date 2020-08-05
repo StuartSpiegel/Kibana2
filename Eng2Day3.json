@@ -1,0 +1,372 @@
+
+GET _search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+#Could also sort on name
+#Check the nodes and the node types  and sort by node
+GET _cat/nodeattrs?v&s=node
+GET _cat/nodes?v&s=name
+GET _cat/nodeattrs?v&s=name
+
+#Verify the shard allocation
+GET _cat/shards?h=index,shard,prirep,node&s=index,prirep
+
+#Cluster backup, query DSL version of defining repo and repo path
+PUT _snapshot/my_repo
+{
+  "type": "fs",
+  "settings": {
+    "location": "/shared_folder/my_repo"
+  }
+}
+
+#Can control which indices are backed up
+#Take a snapshot from query DSL
+PUT _snapshot/my_repo/cluster_snapshot_1
+{
+  "indices": "*",
+  "ignore_unavailable": true,
+  "include_global_state": true
+}
+
+#Get the progress of the backup
+GET _snapshot/_status
+
+## Update cluster settings to allocate shards
+#Transient does not survive cluster restart
+PUT _cluster/settings
+{
+  "persistent": {
+    "cluster": {
+      "routing": {
+        "allocation.awareness.attributes": ["my_rack"],
+        "allocation.awareness.force.my_rack.values": "rack1, rack2"
+      }
+    }
+  }
+}
+
+#The settings have now been made persistent:
+# Now confirm with the below test that your shard allocation and topology is correct, we want primary and replica shards to be on different racks
+GET _cat/shards?h=index,shard,prirep,node&s=index,prirep
+
+#Verify 5-node cluster with hot-warm arch, rack allocation,ILM
+GET _cat/nodes?v&s=name
+GET _cat/nodeattrs?v&s=name
+# Persist ILM Policy for custom index
+
+#Define a new index
+PUT logs_server4
+
+# 5.1.8
+PUT logs_server1/_settings
+{
+  "index.routing.allocation.require.my_temp": "warm"
+}
+
+PUT logs_server2/_settings
+{
+  "index.routing.allocation.require.my_temp": "warm"
+}
+
+PUT logs_server3/_settings
+{
+  "index.routing.allocation.require.my_temp": "warm"
+}
+
+PUT logs_server4/_settings
+{
+  "index.routing.allocation.require.my_temp": "hot"
+}
+
+# 5.2.1
+PUT logs-000002
+{
+  "settings": {
+    "number_of_shards": 4,
+    "number_of_replicas": 1,
+     "routing": {
+      "allocation": {
+        "require": {
+          "my_temp" : "hot"
+        }
+      }
+    }
+  },
+  "aliases": {
+    "logs": {
+      "is_write_index": true
+    }
+  }
+}
+
+POST logs/_bulk
+{ "index" : { "_id" : "1"}}
+{ "level" : "INFO", "message" : "recovered [20] indices into cluster_state", "date" : "2018-07-04"}
+{ "index" : { "_id" : "2"}}
+{ "level" : "WARN", "message" : "received shard failed for shard id 0", "date" : "2018-07-04"}
+{ "index" : { "_id" : "3"}}
+{ "level" : "INFO", "message" : "Cluster health status changed from [YELLOW] to [GREEN]", "date" : "2018-07-04"}
+
+GET logs/_search
+
+# 5.2.4
+POST logs/_rollover
+{
+  "conditions": {
+    "max_age": "1d",
+    "max_docs": 2,
+    "max_size": "1gb"
+  },
+  "settings": {
+    "number_of_shards": 4,
+    "number_of_replicas": 1,
+    "routing": {
+      "allocation": {
+        "require": {
+          "my_temp": "hot"
+        }
+      }
+    }
+  }
+}
+
+POST logs/_bulk
+{ "index" : { "_id" : "4"}}
+{ "level" : "INFO", "message" : "[node2] started", "date" : "2018-07-05"}
+{ "index" : { "_id" : "5"}}
+{ "level" : "WARN", "message" : "not enough master nodes discovered during pinging", "date" : "2018-07-05"}
+
+GET logs-000001/_search
+DELETE logs
+
+#Prepare logs-000001 for shrinking by making it read-only and allocating all the shards to warm nodes
+PUT logs-000001/_settings
+{
+  "routing": {
+    "allocation": {
+      "require": {
+        "my_temp" : "warm"
+      }
+    }
+  },
+  "blocks.write": true
+}
+
+POST logs-000001/_shrink/shrink-logs-000001
+{
+  "settings": {
+    "index.number_of_shards": 1,
+    "codec": "best_compression"
+  }
+}
+
+POST shrink-logs-000001/_forcemerge?max_num_segments=1
+
+POST _aliases
+{
+  "actions": [
+    {
+      "remove": {
+        "index": "logs-000001",
+        "alias": "logs"
+      }
+    },
+    {
+      "add": {
+        "index": "shrink-logs-000001",
+        "alias": "logs"
+      }
+    }
+  ]
+}
+
+#we will be using its alias from now on (shrink-logs-000001)
+DELETE logs-000001
+
+
+
+#------------------------------------------------------------------#
+#Build an index template, allocate this template to only write to certain nodes
+# Lab 5.3.2
+
+PUT _template/logs-template
+{
+  "index_patterns": [
+    "logs-*"
+  ],
+  "template": {
+    "settings": {
+      "number_of_shards": 4,
+      "number_of_replicas": 1,
+      "routing": {
+        "allocation": {
+          "require": {
+            "my_temp": "hot"
+          }
+        }
+      },
+      "index.lifecycle.name": "logs-hot-warm-policy",
+      "index.lifecycle.rollover_alias": "logs"
+    }
+  }
+}
+
+# Check the lifestyle state of the logs index
+GET logs/_ilm/explain
+
+PUT _cluster/settings
+{
+    "transient": {
+      "indices.lifecycle.poll_interval": "5s"
+    }
+}
+
+GET logs/_ilm/explain
+GET logs/_search
+
+#View shard allocation
+GET _cat/shards/*logs-*?v&h=index,shard,prirep,state,node&s=index,shard,prirep
+
+##Challenge Eng II Day 4 ##
+##Add following attributes on top of rack and temp, add server_size as node attribute
+##Server1= rack1, hot, large (Dedicated ingest,data,master)
+##Server2= rack1, hot, medium (Dedicated ingest,data,master)
+##Server3= rack2, warm, large (Dedicated data)
+##Server4= rack2, warm, medium (Dedicated data)
+##Server5= rackvm, none, small (Dedicated master)
+#Create ILM Policy called hwcd
+##Rollover index to warm phase/nodes after 120GB or 1 day
+###Warm phase: Shrink number_of_shards= 2 from 3 (Keep the 1 Replica) and force_merge segments= 1
+####Rollover index to cold phase after 30 days
+#####Cold Phase: Shrink number of shards=1 and remove replicas and freeze index
+######Delete after 365 days
+
+##Create template that implements settings coming from an index pattern for parser-* patterns.
+##Size of index is 100GB - 120GB
+#####(How many primary shards if each shard should be no more than 40GB?)
+##1 Replica per primary
+##write to hot nodes that are large servers
+##add index lifecycle policy for hwcd
+##add custom mapping structure along with analyzers
+##add default pipeline that parses user_agent, locales field from earlier
+##create alias that is_write_index: true called cont_local
+#Define the test index
+PUT parser-temp-test
+
+#Define the index template
+PUT _template/parser-temp-test
+{
+  "index_patterns": [
+    "parser-*"
+  ],
+  "template": {
+    "settings": {
+      "number_of_shards": 3,
+      "number_of_replicas": 1
+    },
+    "routing": {
+      "allocation": {
+        "require": {
+          "my_temp": "hot",
+          "server_size": "large"
+        }
+      }
+    },
+    "mappings": {
+      "properties": {
+        "locales": {
+          "type": "text",
+          "analyzer": "mapping_analyzer"
+        },
+        "content": {
+          "type": "text",
+          "fields": {
+            "english": {
+              "type": "text",
+              "analyzer": "english"
+            },
+            "spanish": {
+              "type": "text",
+              "analyzer": "spanish"
+            },
+            "french": {
+              "type": "text",
+              "analyzer": "french"
+            },
+            "german": {
+              "type": "text",
+              "analyzer": "german"
+            },
+            "italian": {
+              "type": "text",
+              "analyzer": "italian"
+            }
+          }
+        }
+      }
+    },
+    "analysis": {
+      "mapping_analyzer": {
+        "type": "custom",
+        "char_filter": [
+          "locales_as_text"
+        ],
+        "tokenizer": "standard",
+        "filter": [
+          "lowercase",
+          "stop"
+        ]
+      }
+    },
+    "alias": {
+      "actions": [
+        {
+          "add": {
+            "index": "parser-temp-test",
+            "alias": "cont_local"
+          }
+        }
+      ]
+    },
+    "index.lifecycle.name": "hwcd",
+    "index.default_pipeline": "user_agent_parser"
+  }
+}
+
+
+
+#Test doc for parser template
+POST parser-temp-test/_doc
+{
+  "locales": "de-de,fr-fr,en-us,zh-chs,it-it,es-es",
+  "content": "We are also actively working on documenting all the new features in the guide. Here are some of the highlighted features in this release: New Routing Algorithm () Up to 0.90.0, elasticsearch used a relatively naive algorithm of balancing shards across the cluster, by trying to maintaining an even number of shards across (data) nodes. This created problems with clusters holding many indices, specifically with varied sizes. The new algorithm takes the fact that shards belong to an index into account, trying to balance an index out across all nodes. The new algorithm is based on a weight function, and we will slowly add additional weight options (such as shard size) down the road. Suggst () The suggest feature (part of a search request) allows Elasticsearch to provide suggestions for the given text based on the corpus that is part of the index.",
+  "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36"
+}
+
+PUT test1
+PUT test2
+
+POST _aliases
+{
+  "actions": [
+    {
+      "add": {
+        "index": "test1",
+        "alias": "alias1"
+      }
+    },
+    {
+      "add": {
+        "index": "test2",
+        "alias": "alias1"
+      }
+    }
+  ]
+}
+
+GET _cat/aliases

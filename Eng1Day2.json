@@ -1,0 +1,552 @@
+
+GET _search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+#Cluster management
+GET _cat/aliases
+GET _cat/indices?v
+GET _cat/nodeattrs?v
+
+#Challenge Day 1
+GET logs_server*/_search
+{
+  "query": {
+    "bool": {
+      "must_not": [
+        {
+          "match": {
+            "language.code": "en-us"
+          }
+        },
+        {
+          "match": {
+            "geoip.country_code2": "US"
+          }
+        }
+      ],
+      "should": [
+        {
+          "match": {
+            "geoip.country_code2": "RU"
+          }
+        }
+      ],
+      "filter": {
+        "range": {
+          "runtime_ms": {
+            "gte": 30000
+          }
+        }
+      }
+    }
+  },
+  "sort": [
+    {
+      "_score": {
+        "order": "desc"
+      }
+    },
+    {
+      "geoip.country_name.keyword": {
+        "order": "desc"
+      }
+    }
+  ]
+}
+
+#First AGG
+#size of 0 get cached
+#Does not return the data -performance
+GET logs_server*/_search
+{
+  "size": 0,
+  "aggs": {
+    "Avg Response": {
+      "avg": {
+        "field": "response_size"
+      }
+    },
+    "Min Response" : {
+      "min": {
+        "field": "response_size"
+      }
+    },
+    "Max Response" : {
+      "max": {
+        "field": "response_size"
+      }
+    }
+  }
+}
+
+
+#Get the mapping structure to be able to check mappings
+GET /logs_server2/_mapping
+
+#Nested AGG VS a sub-bucket
+#Example of sub-bucketing
+GET logs_server*/_search
+{
+  "size": 0,
+  "aggs": {
+    "Hostname": {
+      "terms": {
+        "field": "host.keyword",
+        "size": 10
+      }
+    },
+    "City": {
+      "terms": {
+        "field": "geoip.city_name.keyword",
+        "size": 10
+      }
+    }
+  }
+}
+
+# --LAB 3.1--
+GET /logs_server1/_mapping
+
+#3.1
+GET /logs_server1/_search
+{
+  "size": 0,
+  "aggs": {
+    "fastest_request_time": {
+      "min": {
+        "field": "runtime_ms"
+      }
+    }
+  }
+}
+
+#3.2
+GET /logs_server1/_search
+{
+  "size": 0,
+  "aggs": {
+    "sloesest_request_time": {
+      "max": {
+        "field": "runtime_ms"
+      }
+    }
+  }
+}
+
+#3.3
+GET /logs_server1/_search
+{
+  "size": 0,
+  "aggs": {
+    "request_time_stats": {
+      "stats": {
+        "field": "runtime_ms"
+      }
+    }
+  }
+}
+
+#3.4
+GET /logs_server1/_search
+{
+  "size": 0,
+  "aggs": {
+    "runtime_median_and_95": {
+      "percentiles": {
+        "field": "runtime_ms",
+        "percents": [
+          50,
+          95
+        ]
+      }
+    }
+  }
+}
+# 3.5
+GET /logs_server1/_search
+{
+  "size": 0,
+  "aggs": {
+    "runtime_goal": {
+      "percentile_ranks": {
+        "field": "runtime_ms",
+        "values": [
+          500
+        ]
+      }
+    }
+  }
+}
+
+#3.6
+GET /logs_server*/_search
+{
+  "aggs": {
+    "1": {
+      "cardinality": {
+        "field": "originalUrl.keyword"
+      }
+    }
+  },
+  "size": 0,
+  "_source": {
+    "excludes": []
+  },
+  "stored_fields": [
+    "*"
+  ],
+  "script_fields": {},
+  "docvalue_fields": [
+    {
+      "field": "@timestamp",
+      "format": "date_time"
+    }
+  ],
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "range": {
+            "@timestamp": {
+              "format": "strict_date_optional_time",
+              "gte": "2016-06-16T17:48:59.810Z",
+              "lte": "2020-06-16T17:48:59.810Z"
+            }
+          }
+        }
+      ],
+      "filter": [
+        {
+          "match_all": {}
+        }
+      ],
+      "should": [],
+      "must_not": []
+    }
+  }
+}
+
+#3.7
+GET /logs_server*/_search
+{
+  "size": 0,
+  "query": {
+    "match": {
+      "originalUrl": "elastic"
+    }
+  },
+  "aggs": {
+    "my_url_value_count": {
+      "cardinality": {
+        "field": "originalUrl.keyword"
+      }
+    }
+  }
+}
+
+# -- LAB 3.2 --
+
+#3.2.1
+GET /logs_server*/_search
+{
+  "size": 0,
+  "aggs": {
+    "status_code_buckets": {
+      "terms": {
+        "field": "status_code"
+      }
+    }
+  }
+}
+# 3.2.2
+GET /logs_server1/_search
+{
+  "size": 0,
+  "aggs": {
+    "status_code_buckets": {
+      "terms": {
+        "field": "status_code",
+        "order": {
+          "_key": "asc"
+        }
+      }
+    }
+  }
+}
+
+# 3.2.3
+#Add an aggregation to the query that returns the
+#number of hits in each category
+GET blogs/_search
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "must": {
+        "multi_match": {
+          "query": "open source",
+          "fields": [
+            "title^2",
+            "content"
+          ],
+          "type": "phrase"
+        }
+      }
+    }
+  },
+  "highlight": {
+    "fields": {
+      "title": {},
+      "content": {}
+    },
+    "require_field_match": false,
+    "pre_tags": [
+      "<mark>"
+    ],
+    "post_tags": [
+      "</mark>"
+    ]
+  },
+  "aggs": {
+    "category_terms": {
+      "terms": {
+        "field": "category.keyword",
+        "size": 10
+      }
+    }
+  }
+}
+
+# 3.2.4 - 3.2.5
+GET logs_server1/_search
+{
+  "size": 0,
+  "aggs": {
+    "runtime_histogram": {
+      "histogram": {
+        "field": "response_size",
+        "interval": 10000,
+        "min_doc_count": 1000
+      }
+    }
+  }
+}
+
+# 3.2.6 - 3.2.7
+#we know this aggregation is date histogram
+GET /logs_server1/_search
+{
+  "size": 0,
+  "aggs": {
+    "logs_by_week": {
+      "date_histogram": {
+        "field": "@timestamp",
+        "calendar_interval": "week"
+      }
+    }
+  }
+}
+
+# --LAB 3.3-- Combining Aggegations
+
+# 3.3.1
+GET logs_server*/_search
+{
+  "size": 0,
+  "aggs": {
+    "logs_by_week": {
+      "date_histogram": {
+        "field": "@timestamp",
+        "calendar_interval": "week"
+      }
+    }
+  }
+}
+# 3.3.2
+GET logs_server*/_search
+{
+  "size": 0,
+  "aggs": {
+    "blogs_by_week": {
+      "date_histogram": {
+        "field": "@timestamp",
+        "calendar_interval": "week"
+      },
+      "aggs": {
+        "statis_code_buckets": {
+          "terms": {
+            "field": "status_code"
+          }
+        }
+      }
+    }
+  }
+}
+
+# 3.3.3 - median runtime(ms) for each status_code
+#Instance of sub bucketing (agg within an agg)
+GET logs_server*/_search
+{
+  "size": 0,
+  "aggs": {
+    "status_code_buckets": {
+      "terms": {
+        "field": "status_code"
+      },
+      "aggs": {
+        "runtime": {
+          "percentiles": {
+            "field": "runtime_ms",
+            "percents": [
+              50
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+
+# 3.3.4 - 3.3.5
+#Remember to set the return size to 3, the default return size for JSON is 10, question only wanted top 3 URL's.
+GET /logs_server*/_search
+{
+  "size": 0,
+  "aggs": {
+    "top_cities": {
+      "terms": {
+        "field": "geoip.cit_name.keyword",
+        "size": 10
+      },
+      "aggs": {
+        "top_urls": {
+          "significant_terms": {
+            "field": "originalUrl.keyword",
+            "size": 3
+          }
+        }
+      }
+    }
+  }
+}
+
+# 3.3.6
+# Write a query that searches for "elasticsearch siem" in the content field, use this scope of documents to list only the "title" field of the top 3 blogs of each one of the top 5 categories.
+GET /logs_server*/_search
+{
+  "size": 0,
+  "query": {
+    "match": {
+      "content": "elasticsearch siem"
+    }
+  },
+  "aggs": {
+    "top5_categories": {
+      "terms": {
+        "field": "category.keyword",
+        "size": 5
+      },
+      "aggs": {
+        "top3_blogs": {
+          "top_hits": {
+            "size": 3,
+            "_source": [
+              "title"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+
+# Challenge Question Module 3
+# Better way or phrasing the question:
+# "What is the first and last time a log was collected from the top server
+#from each of the top 3 cities in the United States from the logs_server* indices?"
+
+GET logs_server*/_search
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "filter": {
+        "term": {
+          "geoip.country_code2.keyword": "US"
+        }
+      }
+    }
+  },
+  "aggs": {
+    "Hostname": {
+      "terms": {
+        "field": "host.keyword",
+        "order": {
+          "_key": "asc"
+        },
+        "size": 3
+      },
+      "aggs": {
+        "First Host Log": {
+          "min": {
+            "field": "@timestamp"
+          }
+        },
+        "City" : {
+          "terms": {
+            "field": "geoip.city_name.keyword",
+            "size": 5
+          },
+          "aggs": {
+            "First Log": {
+              "min": {
+                "field": "@timestamp"
+              }
+            },
+            "Last Log": {
+              "max": {
+                "field": "@timestamp"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+#Bonus Question
+# 3 metric aggs for each of the three buckets
+GET logs_server*/_search
+{
+  "size": 0,
+  "aggs": {
+    "Hostname": {
+      "terms": {
+        "field": "host.keyword",
+        "size": 10
+      },
+      "aggs": {
+        "mintime": {
+          "min": {
+            "field": "@timestamp"
+          }
+        },
+        "maxtime" : {
+          "max": {
+            "field": "@timestamp"
+          }
+        },
+        "Unique Hosts": {
+          "cardinality": {
+            "field": "geoip.city_name.keyword"
+          }
+        }
+      }
+    }
+  }
+}

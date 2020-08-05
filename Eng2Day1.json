@@ -1,0 +1,739 @@
+
+GET _search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+# Might have to build a character filter, might call a pre built tokenizer in the exam
+# Building an analyzer, building an analyzer is per index
+# By default analyzers use the standard analyzer
+POST _analyze
+{
+  "analyzer": "keyword",
+  "text": ["de-de", "fr-fr", "en-us"]
+}
+
+POST _analyze
+{
+  "analyzer": "standard",
+  "text": ["Elasticsearch training is fun, Why Not!"]
+
+}
+
+#The english analyzer uses stemming, it indexes the root of every word
+# Dropps the connector words and special characters
+# (and, the, or, etc)
+
+#Use the custom analyzer docs in the docs to fill in after auto-complete
+#After char filter you give the name of the char_filter
+# Defined a custom char filter and implement custom analyzer
+DELETE analyzer_test
+# fields is being appended to the content field (multifields)
+# the fields line is the beginning of multi field definition, lose auto-complete here
+PUT analyzer_test
+{
+  "settings": {
+    "analysis": {
+      "char_filter": {
+        "locales_as_text": {
+          "type": "mapping",
+          "mappings": [
+            "en-us => english",
+            "it-it => italian",
+            "fr-fr => french"
+          ]
+        }
+      },
+      "analyzer": {
+        "mapping_analyzer": {
+          "type": "custom",
+          "char_filter": [
+            "locales_as_text"
+          ],
+          "tokenizer": "standard",
+          "filter": [
+            "lowercase",
+            "stop"
+          ]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "locales": {
+        "type": "text",
+        "analyzer": "mapping_analyzer"
+      },
+      "content": {
+        "type": "text",
+        "fields": {
+          "english": {
+            "type": "text",
+            "analyzer": "english"
+          },
+          "spanish": {
+            "type": "text",
+            "analyzer": "spanish"
+          },
+          "french": {
+            "type": "text",
+            "analyzer": "french"
+          },
+          "german": {
+            "type": "text",
+            "analyzer": "german"
+          },
+          "italian": {
+            "type": "text",
+            "analyzer": "italian"
+          }
+        }
+      }
+    }
+  }
+}
+#Verify that mappings and setting are correct for new index and make sure fields are moving through the custom analyzer
+GET analyzer_test/_settings
+GET analyzer_test/_mapping
+
+#Test the char filter
+POST analyzer_test/_analyze
+{
+  "char_filter": [
+    "locales_as_text"
+  ],
+  "text": [
+    "de-de",
+    "fr-fr",
+    "en-us",
+    "zh-chs",
+    "it-it",
+    "es-es"
+  ]
+}
+
+# Build a custom analyzer and append the custom char-filter
+PUT analyzer_test/_settings
+{
+  "analysis": {
+    "analyzer": {
+      "mapping_analyzer": {
+        "type": "custom",
+        "char_filter": [
+          "locales_as_text"
+        ],
+        "tokenizer": "standard",
+        "filter": [
+          "lowercase"
+        ]
+      }
+    }
+  }
+}
+
+
+POST analyzer_test/_doc
+{
+
+}
+
+GET analyzer_test/_search
+{
+  "query": {
+    "match": {
+      "locales": "spanish"
+    }
+  }
+}
+
+# Put the same doc in the index
+PUT analyzer_test/_doc/1
+{
+  "id": "someid",
+  "title": "My Blog Title",
+  "products": [ "logstash", "beats" ],
+  "authors": [
+    {
+      "name": "Author1",
+      "company": {
+        "name": "Company1",
+        "country": {
+          "name": "Country1",
+          "code": "C1"
+        }
+      }
+    }
+  ]
+}
+
+#Define the denormalized_blogs index
+PUT denormalized_blogs
+{
+  "mappings": {
+    "properties": {
+      "id": {
+        "type": "keyword"
+      },
+      "title": {
+        "type": "text",
+        "analyzer": "english",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "products": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "authors": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword"
+              }
+            }
+          },
+          "company": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "text",
+                "fields": {
+                  "keyword": {
+                    "type": "keyword"
+                  }
+                }
+              },
+              "country": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "text",
+                    "fields": {
+                      "keyword": {
+                        "type": "keyword"
+                      }
+                    }
+                  },
+                  "code": {
+                    "type": "keyword"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+#index data into the newly created blogs index
+POST denormalized_blogs/_bulk
+{"index":{"_id":1}}
+{"id":"1","title":"Time Series with Kibana","authors":[{"name":"Alex Francoeur","company":{"country":{"code":"FR","name":"France"},"name":"ACME"}},{"name":"Chris Cowan","company":{"country":{"code":"NI","name":"Nigeria"},"name":"Elastic"}}]}
+{"index":{"_id":2}}
+{"id":"2","title":"Memory Issues We'll Remember","authors":[{"name":"Chris Overton","company":{"country":{"code":"FR","name":"France"},"name":"Globex"}},{"name":"Alex Brasetvik","company":{"country":{"code":"BR","name":"Brazil"},"name":"Elastic"}}]}
+{"index":{"_id":3}}
+{"id":"3","title":"Making Kibana Accessible","authors":[{"name":"Alex Francoeur","company":{"country":{"code":"FR","name":"France"},"name":"ACME"}},{"name":"Chris Cowan","company":{"country":{"code":"NI","name":"Nigeria"},"name":"Elastic"}},{"name":"Tim Roes","company":{"country":{"code":"JP","name":"Japan"},"name":"Soylent"}}]}
+
+# 1.1.5
+GET denormalized_blogs/_search
+{
+  "size": 0,
+  "aggs": {
+    "NAME": {
+      "terms": {
+        "field": "authors.company.name.keyword",
+        "size": 5
+      }
+    }
+  }
+}
+
+# 1.1.6
+GET denormalized_blogs/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "match": {
+            "authors.name": "alex"
+          }
+        },
+        {
+          "match": {
+            "authors.company.name.keyword": "Elastic"
+          }
+        }
+      ]
+    }
+  }
+}
+
+# -- Lab 1.3 --
+POST version_test/_bulk
+{"index":{"_id":1}}
+{"version":"5.6.1"}
+{"index":{"_id":2}}
+{"version":"6.0.0"}
+{"index":{"_id":3}}
+{"version":"6.8.1"}
+
+# 1.3.2
+# I had to look this one up, done use the wildcard query much
+GET version_test/_search
+{
+  "query": {
+    "wildcard": {
+      "version.keyword": {
+        "value": "??6??"
+      }
+    }
+  }
+}
+
+POST version_fixed/_bulk
+{"index":{"_id":1}}
+{"version":{ "display_name": "5.6.1", "major": 5, "minor": 6, "bugfix": 1}}
+{"index":{"_id":2}}
+{"version":{ "display_name": "6.0.0", "major": 6, "minor": 0, "bugfix": 0}}
+{"index":{"_id":3}}
+{"version":{ "display_name": "6.8.1", "major": 6, "minor": 8, "bugfix": 1}}
+
+# 1.3.4
+GET version_fixed/_search
+{
+  "query": {
+    "match": {
+      "version.minor": "6"
+    }
+  }
+}
+
+POST loglevel_test1/_doc/
+{
+  "level": "info"
+}
+
+POST loglevel_test2/_doc/
+{
+  "log_level": "warn"
+}
+
+# 1.3.6
+#Skip
+
+#Put the new mappings for the index alias
+# 1.3.7
+PUT loglevel_test1/_mapping
+{
+  "properties": {
+    "log": {
+      "properties": {
+        "level": {
+          "type": "alias",
+          "path": "level.keyword"
+        }
+      }
+    }
+  }
+}
+
+PUT loglevel_test2/_mapping
+{
+  "properties": {
+    "log": {
+      "properties": {
+        "level": {
+          "type": "alias",
+          "path": "log_level.keyword"
+        }
+      }
+    }
+  }
+}
+
+# 1.3.8
+GET logs_server*/_search
+{
+  "size": 0,
+  "aggs": {
+    "log-level": {
+      "terms": {
+        "field": "log.level",
+        "size": 10
+      }
+    }
+  }
+}
+
+# -- Lab 4.1 --
+# Test the default standard analyzer on a String
+GET _analyze
+{
+  "text": "Introducing beta releases: Elasticsearch and Kibana Docker images!"
+}
+
+GET _analyze
+{
+  "analyzer": "whitespace",
+  "text": "Introducing beta releases: Elasticsearch and Kibana Docker images!"
+}
+
+GET _analyze
+{
+  "analyzer": "stop",
+  "text": "Introducing beta releases: Elasticsearch and Kibana Docker images!"
+}
+
+GET _analyze
+{
+  "analyzer": "keyword",
+  "text": "Introducing beta releases: Elasticsearch and Kibana Docker images!"
+}
+
+GET _analyze
+{
+  "analyzer": "english",
+  "text": "Introducing beta releases: Elasticsearch and Kibana Docker images!"
+}
+
+# 1.4.5
+# Analayze text using the standard tokenizer and the lowercase and snowball filters.
+GET _analyze
+{
+  "tokenizer": "standard",
+  "filter": ["lowercase", "snowball"],
+  "text": [ "Elasticsearch é um motor de buscas distribuído."]
+}
+
+GET _analyze
+{
+  "analyzer": "english",
+  "text": ["This release includes mainly bug fixes."]
+}
+
+#Test again with ASCII Folding enabled in filters
+GET _analyze
+{
+  "tokenizer": "standard",
+  "filter": ["lowercase", "asciifolding"],
+  "text": "Elasticsearch é um motor de buscas distribuído."
+}
+
+GET _analyze
+{
+  "analyzer": "english",
+  "text": "C++ can help it and your IT systems."
+}
+
+GET _analyze
+{
+  "analyzer": "english",
+  "text": ["C++ can help it and your IT systems"]
+}
+
+
+# 1.4.8 - Custom Analyzer
+PUT analysis_test
+{
+  "settings": {
+    "analysis": {
+      "char_filter": {
+        "to_cpp": {
+          "type": "mapping",
+          "mappings": [
+            "c++ => cpp",
+            "C++ => cpp",
+            "IT => _IT_"
+            ]
+        }
+      },
+      "filter": {
+        "my_stop": {
+          "type": "stop",
+          "stopwords": ["can", "we", "our", "you", "your", "all"]
+        }
+      },
+      "analyzer": {
+        "my_analyzer": {
+          "tokenizer": "standard",
+          "char_filter": ["to_cpp"],
+          "filter": ["lowercase","stop" ,"my_stop"]
+        }
+      }
+    }
+  }
+}
+#Test that your newly defined custom analyzer works
+GET analysis_test/_analyze
+{
+  "analyzer": "my_analyzer",
+  "text": "C++ can help it and your IT systems."
+}
+
+# 1.4.10
+#Create a new index called blogs_analyzed that uses your custom analyzer from the previous step
+# Use the mappings from the "blogs" index and add multi fields to both the content and title fields named "my_analyzer", the multifields should be of type text and set analyzer to my_analyzer
+PUT blogs_analyzed
+{
+  "settings": {
+    "analysis": {
+      "char_filter": {
+        "cpp_it": {
+          "type": "mapping",
+          "mappings": [
+            "c++ => cpp",
+            "C++ => cpp",
+            "IT => _IT_"
+          ]
+        }
+      },
+      "filter": {
+        "my_stop": {
+          "type": "stop",
+          "stopwords": [
+            "can",
+            "we",
+            "our",
+            "you",
+            "your",
+            "all"
+          ]
+        }
+      },
+      "analyzer": {
+        "my_analyzer": {
+          "tokenizer": "standard",
+          "char_filter": [
+            "to_cpp"
+          ],
+          "filter": [
+            "lowercase",
+            "stop",
+            "my_stop"
+          ]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "author": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      },
+      "category": {
+        "type": "keyword"
+      },
+      "content": {
+        "type": "text",
+        "fields": {
+          "my_analyzer": {
+            "type": "text",
+            "analyzer": "my_analyzer"
+          }
+        }
+      },
+      "publish_date": {
+        "type": "date"
+      },
+      "locales": {
+        "type": "keyword"
+      },
+      "title": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          },
+          "my_analyzer": {
+            "type": "text",
+            "analyzer": "my_analyzer"
+          }
+        }
+      },
+      "url": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      }
+    }
+  }
+}
+
+# 1.4.11
+POST _reindex?wait_for_completion=false
+{
+  "source": {"index": "blogs"},
+  "dest":   {"index": "blogs_analyzed"}
+}
+# 1.4.12
+# Compare the results of our analyzer vs the standard one
+GET blogs_analyzed/_search
+{
+  "query": {
+    "match": {
+      "content.my_analyzer": "c++"
+    }
+  }
+}
+
+GET blogs_analyzed/_search
+{
+  "query": {
+    "match": {
+      "title.my_analyzer": "IT"
+    }
+  }
+}
+
+#ENG II - Module 1 Challenge
+#Create an index with the following settings/mappings:
+##Map language acronyms as full text using char_filter for following languages:
+    #english (en-us), german (de-de), french (fr-fr), spanish (es-es), japanese (ja-jp), korean (ko-kr), chinese (zh-chs), italian (it-it)
+##Create analyzer using custom char_filter, standard tokenizer and lowercase filter.
+##Create custom mapping for locales field that has to run through new custom analyzer and also index as keyword as well
+##Create a content field and add multi-fields for each of the following languages:
+    ##English, French, Spanish, German, Italian
+##Test the analyzer for locales field and index doc to test content field
+##Run a query to confirm the analyzed strings for locales field is correct: "spanish" should bring back docs with es-es
+
+PUT test
+{
+  "settings": {
+    "analysis": {
+      "char_filter": {
+        "locales_as_text": {
+          "type": "mapping",
+          "mappings": [
+            "en-us => english",
+            "it-it => italian",
+            "fr-fr => french",
+            "de-de => german",
+            "es-es => spanish",
+            "ja-jp => japanese",
+            "ko-kr => korean",
+            "zh-chs => chinese"
+          ]
+        }
+      },
+      "analyzer": {
+        "mapping_analyzer": {
+          "type": "custom",
+          "char_filter": [
+            "locales_as_text"
+          ],
+          "tokenizer": "standard",
+          "filter": [
+            "lowercase"
+          ]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "locales": {
+        "type": "text",
+        "analyzer": "mapping_analyzer"
+      },
+      "content": {
+        "type": "text",
+         "fields": {
+          "english": {
+            "type": "text",
+            "analyzer": "english"
+          },
+          "spanish": {
+            "type": "text",
+            "analyzer": "spanish"
+          },
+          "french": {
+            "type": "text",
+            "analyzer": "french"
+          },
+          "german": {
+            "type": "text",
+            "analyzer": "german"
+          },
+          "italian": {
+            "type": "text",
+            "analyzer": "italian"
+          }
+        }
+      }
+    }
+  }
+}
+GET test/_settings
+GET test/_mapping
+
+PUT test/_doc/1
+{
+  "content": "es-es"
+}
+GET test/_search
+{
+  "query": {
+    "match": {
+      "locales": "spanish"
+    }
+  }
+}
+
+## Ingest pipelines
+#If i see the field of locales, sepearate each keyword value in the array by their commas
+#If reindex batch field exists were setting it to 0, if it doesnt exist we create it and set it to 0.
+PUT _ingest/pipeline/test_pipe
+{
+  "description": "This is a test pipeline",
+   "processors": [
+    {
+      "split": {
+        "field": "locales",
+        "separator": ","
+      },
+      "set": {
+        "field": "reindexBatch",
+        "value": "0"
+      }
+    }
+  ]
+}
+
+#test the newly created ingest pipeline
+POST _ingest/pipeline/test_pipe/_simulate
+{
+  "docs": [
+    {
+      "_source": {
+        "locales": "de-de,fr-fr,en-us,zh-chs,it-it,es-es"
+      }
+    }
+  ]
+}

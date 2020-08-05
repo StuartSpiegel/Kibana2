@@ -1,0 +1,100 @@
+
+GET _search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+#Cluster management
+GET _cat/aliases
+GET _cat/indices?v
+GET _cat/nodeattrs?v
+GET _cat/shards?v
+#Get node names
+GET _cat/nodes?s=name
+
+#Create the settings for an index
+#Once an index is created you can not change the number of shards later on.
+PUT new-index
+{
+  "settings": {
+    "number_of_shards": 3,
+    "number_of_replicas": 1
+  }
+}
+
+GET new-index/_settings
+
+#Overall Cluster API management
+GET _cluster/state
+GET _cluster/settings
+GET _cluster/stats/nodes
+GET _cluster/health?level=shards
+GET _cluster/health?level=indices
+GET _cluster/allocation/explain
+GET _cluster/health
+
+# Yellow based off worst replica shard, cant write 1 or more replicas to resources, shard allocation etc
+# RED primary shard is down
+
+#Check the voting configuration
+GET /_cluster/state?filter_path=metadata.cluster_coordination.last_committed_config
+
+# 5.3.4
+PUT test3
+{
+  "settings": {
+    "number_of_shards": 4,
+    "number_of_replicas": 2
+  }
+}
+GET _cat/shards/test3?v
+GET _cat/shards/test1?v&s=shard,prirep
+
+PUT test3/_settings
+{
+  "settings": {
+    "number_of_replicas": 1
+  }
+}
+GET _cat/shards/test1?v&s=node,shard
+GET _cluster/health
+
+DELETE test1
+DELETE test2
+DELETE test3
+
+PUT my_refresh_test
+{
+  "settings": {
+    "index.refresh_interval": "1h"
+  }
+}
+
+PUT my_refresh_test/_bulk
+{ "index" : { "_id" : "1"}}
+{ "level" : "test"}
+{ "index" : { "_id" : "2"}}
+{ "level" : "test"}
+{ "index" : { "_id" : "3"}}
+{ "level" : "test"}
+#1 hr refresh interval -> will return nothing
+GET my_refresh_test/_search
+#The GET API is realtime
+GET my_refresh_test/_doc/1
+POST my_refresh_test/_refresh
+
+PUT my_refresh_test/_doc/4?refresh=true
+{
+  "level" : "test"
+}
+
+GET my_refresh_test/_search
+
+PUT my_refresh_test/_settings
+{
+  "index.refresh_interval": "10s"
+}
+
+DELETE my_refresh_test

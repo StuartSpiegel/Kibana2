@@ -1,0 +1,504 @@
+GET _search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+#Cluster management
+GET _cat/aliases
+GET _cat/indices?v
+GET _cat/nodeattrs?v
+
+#Create a test index
+PUT test-index
+
+#Put the first doc
+PUT /test-index/_doc/1
+{
+  "id": "1",
+  "title": "Better query execution",
+  "category": "Engineering",
+  "date": "July 15, 2015",
+  "author": {
+    "first_name": "Adrien",
+    "last_name": "Grand",
+    "company": "Elastic"
+  }
+}
+#Put the second doc
+PUT /test-index/_doc/2
+{
+  "id": "2",
+  "title": "The Story of Sense",
+  "date": "May 28, 2015",
+  "author": {
+    "first_name": "Boaz",
+    "last_name": "Leskes"
+  }
+}
+#Use a POST and dont specify the doc id
+POST /test-index/_doc/
+{
+  "id": "57",
+  "title": "Phrase Queries: a world without Stopwords",
+  "date":"March 7, 2016",
+  "category": "Engineering",
+  "author":{
+    "first_name": "Gabriel",
+    "last_name": "Moskovicz"
+  }
+}
+#Use the most basic form of GET
+GET /test-index/_doc/1
+
+#Test delete on the document we got
+DELETE /test-index/_doc/1
+
+# Update document 2: set category to "Engineering" and set author.company to "Elastic"
+
+
+#Index a new document with _id of 3 that contains the following fields and values:
+POST test-index/_bulk
+{"update": {"_id": 2}}
+{"doc": {"category": "Engineering", "author.company":"Elastic"}}
+{"index": {"_id": 3}}
+{"title":"Using Elastic Graph","category":"Engineering","date":"May 25, 2016","author":{"first_name":"Mark","last_name":"Harwood","company":"Elastic"}}
+
+#Get the newly imported blogs index from Logstash
+GET /blogs/_search
+GET blogs/_count
+GET logs_server1/_search
+#Get the mapping of the logs_server 1 index
+GET logs_server1/_mapping
+
+GET logs_server1/_search
+{
+  "query": {
+    "match": {
+      "user_agent": {
+        "query": "amazon cloudfront",
+        "operator": "and"
+      }
+    }
+  }
+}
+
+GET blogs/_search
+{
+  "query": {
+    "match": {
+      "content": {
+        "query": "elasticsearch training ELK",
+        "minimum_should_match": 2
+      }
+    }
+  }
+}
+#Give me all the documents with elasticsearch and training back to back and also give me all the documents where there is exactly one term in between elasticsearch and training
+GET blogs/_search
+{
+  "query": {
+    "match_phrase": {
+      "content": {
+        "query": "elasticsearch training",
+        "slop": 1
+      }
+    }
+  }
+}
+
+GET blogs/_search
+{
+  "query": {
+    "match": {
+      "content": {
+        "query": "monitoring datu",
+        "fuzziness": 1
+      }
+    }
+  }
+}
+#Match with "Or's", multi-match example
+#Use the ^(value) to boost
+# type: Changes multi match OR into multi match phrase where order is taken into account
+GET blogs/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "shay banon",
+      "fields": [
+        "title^1.2",
+        "author^3",
+        "content"
+        ],
+        "type": "phrase"
+    }
+  }
+}
+#Filter does not score anything and caches the filter
+GET blogs/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "match": {
+            "content": "elastic"
+          }
+        }
+        ],
+      "must_not": [
+        {"match": {
+          "author": "bohyun"
+        }}
+      ],
+      "should": [
+        {
+          "match": {
+            "author.keyword": "Shay Banon"
+          }
+        }
+      ],
+      "minimum_should_match": 1,
+      "filter": {
+        "terms": {
+          "content": [
+            "open",
+            "source"
+          ]
+        }
+      }
+    }
+  }
+}
+
+GET /blogs/_search
+{
+  "query": {
+    "match": {
+      "content": "elastic"
+    }
+  },
+  "sort": [
+    {
+      "_score": {
+        "order": "desc"
+      }
+    },
+    {
+      "author.keyword": {
+        "order": "asc"
+      }
+    }
+  ]
+}
+# Use size
+GET blogs/_search
+{
+  "size": 100,
+  "query": {
+    "match_all": {}
+  }
+}
+
+GET blogs/_search
+{
+  "size": 100,
+  "_source": {
+    "includes": ["author","title"]
+  },
+  "query": {
+    "match_all": {}
+  }
+}
+
+GET blogs/_search
+{
+  "query": {
+    "match": {
+      "title": "elastic stack"
+    }
+  }
+}
+
+GET blogs/_search
+{
+  "query": {
+    "match": {
+      "title": {
+        "query": "elastic stack",
+        "operator": "and"
+      }
+    }
+  }
+}
+#Blogs that contain search in the content field
+GET blogs/_search
+{
+  "query": {
+    "match": {
+      "content": "search"
+    }
+  }
+}
+
+GET blogs/_search
+{
+  "query": {
+    "match": {
+      "content": {
+        "query": "search analytics",
+        "operator": "and"
+      }
+    }
+  }
+}
+
+GET blogs/_search
+{
+  "size": 3,
+  "query": {
+    "match_phrase": {
+      "content": "search analytics"
+    }
+  }
+}
+
+GET blogs/_search
+{
+  "size": 3,
+  "query": {
+    "match_phrase": {
+      "content": {
+        "query": "search analytics",
+        "slop": 1
+      }
+    }
+  }
+}
+
+#Searches both the title and content fields for phrase
+# open source, boost the title field by a factor of 2
+GET blogs/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "open source",
+      "fields": [
+        "title^2",
+        "content"
+      ]
+    }
+  }
+}
+
+#Search across the blogs index in the title and content fields for the text "open source" but execute the query as if it were a match phrase, meaning the order DOES matter
+GET blogs/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "open source",
+      "fields": [
+        "title",
+        "content"
+      ],
+      "type": "phrase"
+    }
+  }
+}
+
+GET blogs/_search
+{
+  "_source": "title",
+  "query": {
+    "match": {
+      "title": {
+        "query": "oven sauce",
+        "fuzziness": "auto"
+      }
+    }
+  }
+}
+
+GET blogs/_search
+{
+  "query": {
+    "bool": {
+      "should": [
+        {
+          "match": {
+            "content": "performance"
+          }
+        },
+        {
+          "match": {
+            "content": "optimizations"
+          }
+        },
+        {
+          "match": {
+            "content": "improvements"
+          }
+        }
+      ],
+      "minimum_should_match": 2,
+      "must_not": [
+        {
+          "match": {
+            "title": "release releases released"
+          }
+        }
+      ]
+    }
+  }
+}
+
+# Implementing a Search Page
+GET blogs/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "multi_match": {
+            "query": "meetups",
+            "fields": ["title", "content"]
+          }
+        }
+      ],
+      "filter": {
+        "match": {
+          "category.keyword": "News"
+        }
+      }
+    }
+  }
+}
+
+GET blogs/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "multi_match": {
+            "query": "meetups",
+            "fields": [
+              "title",
+              "content"
+            ]
+          }
+        }
+      ],
+      "filter": [
+        {
+          "terms": {
+            "category.keyword": [
+              "News",
+              "Culture"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
+
+#Match phrase query that searches for "elastic stack" in the content field, sort the results from newest to oldest.
+#Modify so results are sorted first by author name and second by publishing date (newest to oldest)
+GET blogs/_search
+{
+  "query": {
+    "match_phrase": {
+      "content": {
+        "query": "elastic stack"
+      }
+    }
+  },
+  "sort": [
+    {
+      "author.keyword": {
+        "order": "asc"
+      }
+    },
+    {
+      "publish_date": {
+        "order": "asc"
+      }
+    }
+  ]
+}
+
+GET blogs/_search
+{
+  "from": 9,
+  "size": 3,
+  "query": {
+    "match_phrase": {
+      "content": {
+        "query" : "elastic stack"
+      }
+    }
+  },
+  "sort": [
+    {
+      "author.keyword": {
+        "order": "asc"
+      }
+    },
+    {
+      "publish_date": {
+        "order": "desc"
+      }
+    }
+  ]
+}
+
+GET logs_server1/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "range": {
+            "runtime_ms": {
+              "gte": 30000
+            }
+          }
+        },
+        {
+          "match": {
+            "geoip.country_name": "Russia"
+          }
+        }
+      ],
+      "filter": {
+        "query": {
+          "bool": {
+            "must_not": [
+              {
+                "match": {
+                  "language.code": "english"
+                }
+              },
+              {
+                "match": {
+                  "geoip.country_name": "US"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "sort": [
+    "_score",
+    {
+      "geoip.country_name": {
+        "order": "asc"
+      }
+    }
+  ]
+}

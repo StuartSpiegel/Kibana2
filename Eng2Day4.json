@@ -1,0 +1,233 @@
+
+GET _search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+
+#------------------------------------------------------------------#
+#Build an index template, allocate this template to only write to certain nodes
+# Lab 5.3.2
+
+PUT _template/logs-template
+{
+  "index_patterns": [
+    "logs-*"
+  ],
+  "template": {
+    "settings": {
+      "number_of_shards": 4,
+      "number_of_replicas": 1,
+      "routing": {
+        "allocation": {
+          "require": {
+            "my_temp": "hot"
+          }
+        }
+      },
+      "index.lifecycle.name": "logs-hot-warm-policy",
+      "index.lifecycle.rollover_alias": "logs"
+    }
+  }
+}
+
+# Check the lifestyle state of the logs index
+GET logs/_ilm/explain
+
+PUT _cluster/settings
+{
+    "transient": {
+      "indices.lifecycle.poll_interval": "5s"
+    }
+}
+
+GET logs/_ilm/explain
+GET logs/_search
+
+#View shard allocation
+GET _cat/shards/*logs-*?v&h=index,shard,prirep,state,node&s=index,shard,prirep
+
+##Challenge Eng II Day 4 ##
+##Add following attributes on top of rack and temp, add server_size as node attribute
+##Server1= rack1, hot, large (Dedicated ingest,data,master)
+##Server2= rack1, hot, medium (Dedicated ingest,data,master)
+##Server3= rack2, warm, large (Dedicated data)
+##Server4= rack2, warm, medium (Dedicated data)
+##Server5= rackvm, none, small (Dedicated master)
+#Create ILM Policy called hwcd
+##Rollover index to warm phase/nodes after 120GB or 1 day
+###Warm phase: Shrink number_of_shards= 2 from 3 (Keep the 1 Replica) and force_merge segments= 1
+####Rollover index to cold phase after 30 days
+#####Cold Phase: Shrink number of shards=1 and remove replicas and freeze index
+######Delete after 365 days
+
+##Create template that implements settings coming from an index pattern for parser-* patterns.
+##Size of index is 100GB - 120GB
+#####(How many primary shards if each shard should be no more than 40GB?)
+##1 Replica per primary
+##write to hot nodes that are large servers
+##add index lifecycle policy for hwcd
+##add custom mapping structure along with analyzers
+##add default pipeline that parses user_agent, locales field from earlier
+##create alias that is_write_index: true called cont_local
+#Define the test index
+PUT parser-temp-test
+
+#Define the index template
+PUT _template/parser-temp-test
+{
+  "index_patterns": [
+    "parser-*"
+  ],
+  "template": {
+    "settings": {
+      "number_of_shards": 3,
+      "number_of_replicas": 1
+    },
+    "routing": {
+      "allocation": {
+        "require": {
+          "my_temp": "hot",
+          "server_size": "large"
+        }
+      }
+    },
+    "mappings": {
+      "properties": {
+        "locales": {
+          "type": "text",
+          "analyzer": "mapping_analyzer"
+        },
+        "content": {
+          "type": "text",
+          "fields": {
+            "english": {
+              "type": "text",
+              "analyzer": "english"
+            },
+            "spanish": {
+              "type": "text",
+              "analyzer": "spanish"
+            },
+            "french": {
+              "type": "text",
+              "analyzer": "french"
+            },
+            "german": {
+              "type": "text",
+              "analyzer": "german"
+            },
+            "italian": {
+              "type": "text",
+              "analyzer": "italian"
+            }
+          }
+        }
+      }
+    },
+    "analysis": {
+      "mapping_analyzer": {
+        "type": "custom",
+        "char_filter": [
+          "locales_as_text"
+        ],
+        "tokenizer": "standard",
+        "filter": [
+          "lowercase",
+          "stop"
+        ]
+      }
+    },
+    "alias": {
+      "actions": [
+        {
+          "add": {
+            "index": "parser-temp-test",
+            "alias": "cont_local"
+          }
+        }
+      ]
+    },
+    "index.lifecycle.name": "hwcd",
+    "index.default_pipeline": "user_agent_parser"
+  }
+}
+
+
+#Test doc for parser template
+POST parser-temp-test/_doc
+{
+  "locales": "de-de,fr-fr,en-us,zh-chs,it-it,es-es",
+  "content": "We are also actively working on documenting all the new features in the guide. Here are some of the highlighted features in this release: New Routing Algorithm () Up to 0.90.0, elasticsearch used a relatively naive algorithm of balancing shards across the cluster, by trying to maintaining an even number of shards across (data) nodes. This created problems with clusters holding many indices, specifically with varied sizes. The new algorithm takes the fact that shards belong to an index into account, trying to balance an index out across all nodes. The new algorithm is based on a weight function, and we will slowly add additional weight options (such as shard size) down the road. Suggst () The suggest feature (part of a search request) allows Elasticsearch to provide suggestions for the given text based on the corpus that is part of the index.",
+  "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36"
+}
+
+
+# Search templates
+# Created a search template, run a query and fill in the variables with whatever i want to run query on the backend
+PUT _scripts/search_temp
+{
+  "script": {
+    "lang": "mustache",
+    "source": {
+      "query": {
+        "match": {
+          "{{field}}" : "{{value}}"
+        }
+      }
+    }
+  }
+}
+
+# Call the search template
+GET blogs/_search/template
+{
+  "id": "search_temp",
+  "params": {
+    "field": "author",
+    "value": "shay"
+  }
+}
+
+# Create mustache script to find docs in a certain date range by Shay with a must and a filter bool query
+# Effecting data vs query data (biggest difference between Painless and mustache, mustache is for search template querying)
+PUT _scripts/search_bool
+{
+  "script": {
+    "lang": "mustache",
+    "source": {
+      "query": {
+        "bool": {
+          "must": [
+            {
+              "range": {
+                "publish_date": {
+                  "gte": "{{start_date}}",
+                  "lte": "{{end_date}}"
+                }
+              }
+            }
+          ],
+          "filter": {
+            "term": {
+              "{{name}}": "{{value}}"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+GET blogs/_search/template
+{
+  "id" : "search_bool",
+  "params": {
+    "start_date" : "2017-01-01",
+    "end_date" : "2017-12-31",
+    "name" : "author",
+    "value" : "shay"
+  }
+}
